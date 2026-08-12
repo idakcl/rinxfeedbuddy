@@ -364,12 +364,13 @@ function MarkdownVideo({
   // 仅用 parseImageUrlMetadata 解析 poster 里的尺寸，用于首屏占位比例（缓解 CLS）。
   const posterMeta = poster ? parseImageUrlMetadata(poster) : undefined;
   const posterSrc = posterMeta?.src;
-  // 视频元素 aspect-ratio 占位的优先级：视频真实比例 > 海报自然尺寸 > 海报内嵌尺寸 > 16:9。
-  // 关键修复：必须用视频真实比例（videoRatio）覆盖，否则 placeholderRatio（海报/16:9）
-  // 与视频真实宽高比不一致时，video 元素盒模型比例 ≠ 视频帧比例，object-fit:contain
-  // 会把视频帧缩进盒子里、上下露黑（与容器 bg-neutral-800 融合即"上下缝"）。
+  // 视频占位比例优先级：视频真实比例 > 海报自然尺寸 > 海报内嵌尺寸 > 16:9。
+  // 容器(外层 div)用此比例预留高度避免 CLS；视频绝对定位填满容器。
+  // 关键：容器比例对齐视频真实比例后，无论微信 X5 是否遵守 object-fit，都不会再出现
+  // 因「盒子比例 ≠ 视频帧比例」导致的 letterbox(黑边)。
   const [posterRatio, setPosterRatio] = useState<string | null>(null);
   const [videoRatio, setVideoRatio] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const placeholderRatio =
     videoRatio ??
     posterRatio ??
@@ -377,8 +378,36 @@ function MarkdownVideo({
       ? `${posterMeta.width} / ${posterMeta.height}`
       : "16 / 9");
 
+  // 用 ref + 多事件监听，比单靠 React 的 onLoadedMetadata 更可靠：
+  // 微信 X5 / 部分 WebView 可能延迟或仅在 loadeddata/canplay 时才给出 videoWidth/Height，
+  // 也可能首帧就用缓存直接就绪。把容器比例对齐视频真实比例，是去掉黑边的根本手段。
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const read = () => {
+      if (v.videoWidth && v.videoHeight) {
+        setVideoRatio(`${v.videoWidth} / ${v.videoHeight}`);
+      }
+    };
+    v.addEventListener("loadedmetadata", read);
+    v.addEventListener("loadeddata", read);
+    v.addEventListener("canplay", read);
+    v.addEventListener("durationchange", read);
+    read(); // 已就绪(缓存命中)时立即读一次
+    return () => {
+      v.removeEventListener("loadedmetadata", read);
+      v.removeEventListener("loadeddata", read);
+      v.removeEventListener("canplay", read);
+      v.removeEventListener("durationchange", read);
+    };
+  }, [src]);
+
   return (
-    <div className="relative my-4 -mx-4 w-[calc(100%+2rem)] overflow-hidden bg-black">
+    <div
+      className="relative my-4 -mx-4 w-[calc(100%+2rem)] overflow-hidden bg-black"
+      // 容器按占位比例(视频真实比例)预留高度，避免 CLS；视频绝对定位填满容器。
+      style={{ aspectRatio: placeholderRatio }}
+    >
       {/* 隐藏的 poster <img>：仅用于读取自然尺寸设定占位比例（缓解 CLS），
           微信内 <img> 正常加载；不可见、不拦截点击，video 自身始终承担显示与交互。 */}
       {posterSrc ? (
@@ -395,27 +424,19 @@ function MarkdownVideo({
           className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
         />
       ) : null}
-      {/* 方案 A：视频自身自然比例撑高度（w-full h-auto），容器跟随视频、无裁切、
-          不再强制容器 aspect-ratio，故微信与 Chrome 垂直对齐一致。style.aspectRatio
-          仅作元数据加载前的占位（避免瞬时 CLS）；视频就绪后其真实比例覆盖。
-          object-fill = object-fit: fill：强制视频帧拉伸填满盒子，部分浏览器（微信 X5）
-          默认会把帧缩进盒子保持比例导致上下黑边，此处显式覆盖为 fill；因 aspectRatio
-          已对齐视频真实比例，正常情况下无形变，仅元数据未就绪的瞬时有极轻微形变。 */}
+      {/* 视频绝对定位 inset-0 占满容器(宽高显式 100%，不受视频自身 intrinsic 尺寸干扰)，
+          objectFit:fill(inline 最高优先级)作为兜底：即便容器比例因元数据未就绪而瞬时偏差，
+          也用拉伸填满而非 letterbox。容器比例一旦对齐视频真实比例，则无形变。 */}
       <video
+        ref={videoRef}
         src={src}
         poster={posterSrc}
         controls
         preload="metadata"
         playsInline
         {...X5_VIDEO_ATTRS}
-        onLoadedMetadata={(e) => {
-          const v = e.currentTarget;
-          if (v.videoWidth && v.videoHeight) {
-            setVideoRatio(`${v.videoWidth} / ${v.videoHeight}`);
-          }
-        }}
-        style={{ aspectRatio: placeholderRatio }}
-        className="block w-full h-auto bg-black object-fill"
+        className="absolute inset-0 block h-full w-full bg-black"
+        style={{ objectFit: "fill" }}
       />
     </div>
   );
