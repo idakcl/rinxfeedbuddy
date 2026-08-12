@@ -38,6 +38,7 @@ export interface Feed {
   pv: number;
   uv: number;
   top?: number;
+  scheduledAt?: string;
 }
 
 export interface FeedListResponse {
@@ -57,6 +58,7 @@ export interface FeedListResponse {
     updatedAt: string;
     pv: number;
     uv: number;
+    scheduledAt?: string;
   }>;
   hasNext: boolean;
 }
@@ -75,6 +77,7 @@ export interface CreateFeedRequest {
   draft: boolean;
   listed: boolean;
   createdAt?: string;
+  scheduledAt?: string | null;
   tags: string[];
 }
 
@@ -86,6 +89,7 @@ export interface UpdateFeedRequest {
   listed: boolean;
   draft?: boolean;
   createdAt?: string;
+  scheduledAt?: string | null;
   tags?: string[];
   top?: number;
 }

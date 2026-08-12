@@ -36,7 +36,8 @@
       "move_to_list_confirm": "選択した {{count}} 件を公開リストに移動しますか？",
       "move_out_list_confirm": "選択した {{count}} 件をリストから除外（非公開）しますか？",
       "move_to_draft_confirm": "選択した {{count}} 件を下書きに移動しますか？",
-      "move_done": "{{count}} 件を更新しました"
+      "move_done": "{{count}} 件を更新しました",
+      "filter_scheduled": "予約"
     }
   },
   "compat_tasks": {
@@ -820,5 +821,12 @@
   "sort_latest": "新着",
   "sort_popular": "人気",
   "total_tags": "全 {{count}} 個のタグ",
-  "anonymous": "匿名"
+  "anonymous": "匿名",
+  "scheduled": {
+    "publish": "予約投稿",
+    "success": "予約投稿に追加しました",
+    "hint": "{{time}} に自動公開",
+    "past": "未来の日時を選択してください"
+  },
+  "scheduled_at": "予約日時"
 }

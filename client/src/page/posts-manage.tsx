@@ -10,7 +10,7 @@ import { useSiteConfig } from "../hooks/useSiteConfig";
 // 列表项类型（后端 FeedListResponse.data 未声明 alias，这里补一个可选别名用于构造链接）。
 type ManagePost = FeedListResponse["data"][number] & { alias?: string | null };
 
-type FilterType = "all" | "normal" | "draft" | "unlisted";
+type FilterType = "all" | "normal" | "draft" | "unlisted" | "scheduled";
 
 // 每页数量跟随全局「分页大小」设置（site.page_size），不再硬编码固定值。
 
@@ -181,7 +181,7 @@ export function PostsManagePage() {
     <div className="w-full max-w-4xl mx-auto px-4 py-6">
       {/* 工具栏：状态筛选 + 搜索 */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        {(["all", "normal", "draft", "unlisted"] as FilterType[]).map((f) => (
+        {(["all", "normal", "draft", "unlisted", "scheduled"] as FilterType[]).map((f) => (
           <button
             key={f}
             type="button"
@@ -294,6 +294,12 @@ export function PostsManagePage() {
                 >
                   {it.title || t("admin.posts.untitled")}
                 </Link>
+                {it.scheduledAt ? (
+                  <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-theme/10 px-2 py-0.5 text-xs font-medium text-theme">
+                    <i className="ri-time-line" />
+                    {t("scheduled.hint", { time: new Date(it.scheduledAt).toLocaleString() })}
+                  </span>
+                ) : null}
                 {it.summary ? (
                   <p className="mt-1 line-clamp-2 text-xs leading-5 text-neutral-500 dark:text-neutral-400">
                     {it.summary}

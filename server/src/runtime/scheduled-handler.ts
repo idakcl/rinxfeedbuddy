@@ -15,7 +15,14 @@ export async function handleScheduled(
 
   const { friendCrontab } = await import("../services/friends");
   const { rssCrontab } = await import("../services/rss");
+  const { publishScheduledFeeds } = await import("../services/feed");
 
-  await friendCrontab(env, ctx, db, cache, serverConfig, clientConfig);
-  await rssCrontab(env, db);
+  // 定时发布检查每次调度都跑（保证 ≤1 分钟延迟，且幂等）。
+  await publishScheduledFeeds(db, cache, serverConfig, env);
+
+  // friend/RSS 同步仅在非「每分钟」cron 时执行，避免每分钟都打外部服务。
+  if (_controller?.cron !== "* * * * *") {
+    await friendCrontab(env, ctx, db, cache, serverConfig, clientConfig);
+    await rssCrontab(env, db);
+  }
 }

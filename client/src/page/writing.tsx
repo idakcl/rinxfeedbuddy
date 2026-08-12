@@ -26,6 +26,8 @@ async function publish({
   tags,
   draft,
   createdAt,
+  scheduledAt,
+  successKey,
   onCompleted,
   showAlert
 }: {
@@ -37,6 +39,8 @@ async function publish({
   draft: boolean;
   alias?: string;
   createdAt?: Date;
+  scheduledAt?: string | null;
+  successKey?: string;
   onCompleted?: () => void;
   showAlert: ShowAlertType;
 }) {
@@ -51,6 +55,7 @@ async function publish({
       listed,
       draft,
       createdAt: createdAt?.toISOString(),
+      scheduledAt,
     }
   );
   if (onCompleted) {
@@ -60,7 +65,7 @@ async function publish({
     showAlert(error.value as string);
   }
   if (data) {
-    showAlert(t("publish.success"), () => {
+    showAlert(t(successKey ?? "publish.success"), () => {
       Cache.with().clear();
       window.location.href = "/feed/" + (data.alias || data.insertedId);
     });
@@ -77,6 +82,8 @@ async function update({
   listed,
   draft,
   createdAt,
+  scheduledAt,
+  successKey,
   onCompleted,
   showAlert
 }: {
@@ -89,6 +96,8 @@ async function update({
   tags?: string[];
   draft?: boolean;
   createdAt?: Date;
+  scheduledAt?: string | null;
+  successKey?: string;
   onCompleted?: () => void;
   showAlert: ShowAlertType;
 }) {
@@ -104,6 +113,7 @@ async function update({
       listed,
       draft,
       createdAt: createdAt?.toISOString(),
+      scheduledAt,
     }
   );
   if (onCompleted) {
@@ -112,7 +122,7 @@ async function update({
   if (error) {
     showAlert(error.value as string);
   } else {
-    showAlert(t("update.success"), () => {
+    showAlert(t(successKey ?? "update.success"), () => {
       Cache.with(id).clear();
       window.location.href = "/feed/" + (alias || id);
     });
@@ -132,6 +142,7 @@ export function WritingPage({ id }: { id?: number }) {
   const [listed, setListed] = useState(true);
   const [content, setContent] = cache.useCache("content", "");
   const [createdAt, setCreatedAt] = useState<Date | undefined>(new Date());
+  const [scheduledAt, setScheduledAt] = useState<Date | undefined>(undefined);
   const [publishing, setPublishing] = useState(false)
   const { showAlert, AlertUI } = useAlert()
   function publishButton() {
@@ -153,6 +164,7 @@ export function WritingPage({ id }: { id?: number }) {
         draft,
         listed,
         createdAt,
+        scheduledAt: null,
         onCompleted: () => {
           setPublishing(false)
         },
@@ -177,11 +189,54 @@ export function WritingPage({ id }: { id?: number }) {
         alias,
         listed,
         createdAt,
+        scheduledAt: null,
         onCompleted: () => {
           setPublishing(false)
         },
         showAlert
       });
+    }
+  }
+
+  // 定时发布：校验时间合法性后，以草稿（隐藏）状态保存并带上排期时间，等待 cron 到点翻转。
+  function scheduledPublishButton() {
+    if (publishing) return;
+    const tagsplit =
+      tags
+        .split("#")
+        .filter((tag) => tag !== "")
+        .map((tag) => tag.trim()) || [];
+    if (!title) {
+      showAlert(t("title_empty"));
+      return;
+    }
+    if (!content) {
+      showAlert(t("content.empty"));
+      return;
+    }
+    if (!scheduledAt || scheduledAt.getTime() <= Date.now() + 60000) {
+      showAlert(t("scheduled.past"));
+      return;
+    }
+    setPublishing(true);
+    const common = {
+      title,
+      content,
+      summary,
+      tags: tagsplit,
+      alias,
+      listed,
+      draft: true,
+      createdAt,
+      scheduledAt: scheduledAt.toISOString(),
+      successKey: "scheduled.success",
+      onCompleted: () => setPublishing(false),
+      showAlert,
+    };
+    if (id !== undefined) {
+      update({ id, ...common });
+    } else {
+      publish({ ...common });
     }
   }
 
@@ -203,6 +258,7 @@ export function WritingPage({ id }: { id?: number }) {
         setListed((data as any).listed === 1);
         setDraft((data as any).draft === 1);
         setCreatedAt(new Date(data.createdAt));
+        setScheduledAt((data as any).scheduledAt ? new Date((data as any).scheduledAt) : undefined);
       });
     return () => { cancelled = true; };
   }, [id]);
@@ -241,6 +297,19 @@ export function WritingPage({ id }: { id?: number }) {
     );
   }
 
+  function ScheduledPublishButton({ className }: { className?: string }) {
+    return (
+      <button
+        onClick={scheduledPublishButton}
+        className={`inline-flex items-center justify-center gap-2 rounded-xl border border-theme px-5 py-3 text-sm font-medium text-theme transition-colors hover:bg-theme/10 active:bg-theme/20 disabled:cursor-not-allowed disabled:opacity-60 ${className ?? ""}`}
+        disabled={publishing}
+      >
+        {publishing && <Loading type="spin" height={16} width={16} />}
+        <span>{t('scheduled.publish')}</span>
+      </button>
+    );
+  }
+
   function MetaInput({ className }: { className?: string }) {
     return (
         <FlatPanel className={className}>
@@ -252,6 +321,7 @@ export function WritingPage({ id }: { id?: number }) {
               </p>
             </div>
             <PublishButton className="w-auto" />
+            <ScheduledPublishButton className="w-auto" />
           </div>
 
           <div className="mt-5 grid gap-4 lg:grid-cols-2">
@@ -319,6 +389,12 @@ export function WritingPage({ id }: { id?: number }) {
                 {t('created_at')}
               </p>
               <DateTimeInput value={createdAt} onChange={setCreatedAt} className="w-full max-w-[16rem]" />
+            </FlatMetaRow>
+            <FlatMetaRow className="gap-3 rounded-none border-0 bg-transparent px-0 py-2 sm:rounded-2xl sm:border sm:bg-secondary sm:px-4 sm:py-3 xl:col-span-1">
+              <p className="mr-2 whitespace-nowrap">
+                {t('scheduled_at')}
+              </p>
+              <DateTimeInput value={scheduledAt} onChange={setScheduledAt} className="w-full max-w-[16rem]" />
             </FlatMetaRow>
           </div>
         </FlatPanel>

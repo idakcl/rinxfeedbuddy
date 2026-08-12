@@ -36,7 +36,8 @@
       "move_to_list_confirm": "確定將選中的 {{count}} 篇文章移入文章列表（公開）嗎？",
       "move_out_list_confirm": "確定將選中的 {{count}} 篇文章移出文章列表（轉為未發布）嗎？",
       "move_to_draft_confirm": "確定將選中的 {{count}} 篇文章移入草稿箱嗎？",
-      "move_done": "已更新 {{count}} 篇"
+      "move_done": "已更新 {{count}} 篇",
+      "filter_scheduled": "定時"
     }
   },
   "compat_tasks": {
@@ -829,5 +830,12 @@
   "sort_latest": "最新",
   "sort_popular": "熱門",
   "total_tags": "共 {{count}} 個標籤",
-  "anonymous": "匿名"
+  "anonymous": "匿名",
+  "scheduled": {
+    "publish": "定時發佈",
+    "success": "已加入定時發佈",
+    "hint": "將於 {{time}} 自動發佈",
+    "past": "請選擇未來的時間"
+  },
+  "scheduled_at": "定時發佈時間"
 }

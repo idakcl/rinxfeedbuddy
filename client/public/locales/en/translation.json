@@ -36,7 +36,8 @@
       "move_to_list_confirm": "Move the selected {{count}} post(s) to the public list?",
       "move_out_list_confirm": "Remove the selected {{count}} post(s) from the list (unlisted)?",
       "move_to_draft_confirm": "Move the selected {{count}} post(s) to drafts?",
-      "move_done": "Updated {{count}}"
+      "move_done": "Updated {{count}}",
+      "filter_scheduled": "Scheduled"
     }
   },
   "compat_tasks": {
@@ -829,5 +830,12 @@
   "sort_latest": "Latest",
   "sort_popular": "Popular",
   "total_tags": "Total {{count}} tags",
-  "anonymous": "Anonymous"
+  "anonymous": "Anonymous",
+  "scheduled": {
+    "publish": "Schedule publish",
+    "success": "Scheduled for publishing",
+    "hint": "Auto-publishes at {{time}}",
+    "past": "Pick a future time"
+  },
+  "scheduled_at": "Scheduled time"
 }

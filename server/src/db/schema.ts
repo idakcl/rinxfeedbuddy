@@ -19,6 +19,7 @@ export const feeds = sqliteTable("feeds", {
     uid: integer("uid").references(() => users.id).notNull(),
     createdAt: created_at,
     updatedAt: updated_at,
+    scheduledAt: integer("scheduled_at", { mode: "timestamp" }),
 });
 
 export const moments = sqliteTable("moments", {

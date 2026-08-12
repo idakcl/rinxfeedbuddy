@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gt, like, lt, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, isNotNull, like, lte, lt, or } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Variables } from "../core/hono-types";
 import { profileAsync } from "../core/server-timing";
@@ -63,7 +63,7 @@ export function FeedService(): Hono<{
         const limit = c.req.query('limit');
         const type = c.req.query('type');
 
-        if ((type === 'draft' || type === 'unlisted') && !admin) {
+        if ((type === 'draft' || type === 'unlisted' || type === 'scheduled') && !admin) {
             return c.text('Permission denied', 403);
         }
 
@@ -80,7 +80,9 @@ export function FeedService(): Hono<{
             ? eq(feeds.draft, 1)
             : type === 'unlisted'
                 ? and(eq(feeds.draft, 0), eq(feeds.listed, 0))
-                : and(eq(feeds.draft, 0), eq(feeds.listed, 1));
+                : type === 'scheduled'
+                    ? and(eq(feeds.draft, 1), isNotNull(feeds.scheduledAt))
+                    : and(eq(feeds.draft, 0), eq(feeds.listed, 1));
 
         const size = await profileAsync(c, 'feed_list_count', () => db.select({ count: count() }).from(feeds).where(where));
 
@@ -150,7 +152,7 @@ export function FeedService(): Hono<{
         const admin = c.get('admin');
         const uid = c.get('uid');
         const body = await profileAsync(c, 'feed_create_parse', () => c.req.json());
-        const { title, alias, listed, content, summary, draft, tags, createdAt } = body;
+        const { title, alias, listed, content, summary, draft, tags, createdAt, scheduledAt } = body;
 
         if (!admin) {
             return c.text('Permission denied', 403);
@@ -173,6 +175,13 @@ export function FeedService(): Hono<{
 
         const date = createdAt ? new Date(createdAt) : new Date();
 
+        // 定时发布：scheduledAt 合法且为未来时间时，强制存为草稿（到点前隐藏），并记录排期时间。
+        // 发布时间先填为排期时间，待 cron 到点翻转时保持一致。
+        const scheduledDate = scheduledAt ? new Date(scheduledAt) : null;
+        const isScheduled = !!scheduledDate && !isNaN(scheduledDate.getTime()) && scheduledDate.getTime() > Date.now();
+        const effectiveDraft = isScheduled ? 1 : (draft ? 1 : 0);
+        const effectiveDate = isScheduled ? scheduledDate! : date;
+
         if (!uid) {
             return c.text('User ID is required', 400);
         }
@@ -187,14 +196,15 @@ export function FeedService(): Hono<{
             uid,
             alias: alias || generateRandomAlias(),
             listed: listed ? 1 : 0,
-            draft: draft ? 1 : 0,
-            createdAt: date,
-            updatedAt: date
+            draft: effectiveDraft,
+            createdAt: effectiveDate,
+            updatedAt: date,
+            scheduledAt: isScheduled ? scheduledDate : null,
         }).returning({ insertedId: feeds.id, alias: feeds.alias }));
 
         await profileAsync(c, 'feed_create_tags', () => bindTagToPost(db, result[0].insertedId, tags));
         await profileAsync(c, 'feed_create_ai_queue', () => syncFeedAISummaryQueueState(db, serverConfig, env, result[0].insertedId, {
-            draft: Boolean(draft),
+            draft: Boolean(effectiveDraft),
             updatedAt: date,
             resetSummary: true,
         }));
@@ -402,7 +412,7 @@ export function FeedService(): Hono<{
         const uid = c.get('uid');
         const id = c.req.param('id');
         const body = await profileAsync(c, 'feed_update_parse', () => c.req.json());
-        const { title, listed, content, summary, alias, draft, top, tags, createdAt } = body;
+        const { title, listed, content, summary, alias, draft, top, tags, createdAt, scheduledAt } = body;
 
         const id_num = parseInt(id);
         const feed = await profileAsync(c, 'feed_update_lookup', () => db.query.feeds.findFirst({ where: eq(feeds.id, id_num) }));
@@ -415,8 +425,20 @@ export function FeedService(): Hono<{
             return c.text('Permission denied', 403);
         }
 
+        // 定时发布：scheduledAt 合法且为未来时间 → 强制草稿（隐藏）并记录排期时间；
+        // scheduledAt 为空（""/null）→ 清除排期；未提供（undefined）→ 保留现有排期。
+        const scheduledProvided = scheduledAt !== undefined;
+        let scheduledDate: Date | null = null;
+        if (scheduledProvided) {
+            scheduledDate = scheduledAt ? new Date(scheduledAt) : null;
+            if (scheduledDate && isNaN(scheduledDate.getTime())) scheduledDate = null;
+        } else {
+            scheduledDate = feed.scheduledAt ?? null;
+        }
+        const isScheduled = !!scheduledDate && scheduledDate.getTime() > Date.now();
+
         const contentChanged = content && content !== feed.content;
-        const isDraft = draft !== undefined ? draft : (feed.draft === 1);
+        const isDraft = isScheduled ? true : (draft !== undefined ? draft : (feed.draft === 1));
         const shouldQueueAISummary = (contentChanged && !isDraft) || (!isDraft && feed.draft === 1 && !feed.ai_summary);
         const updateTime = new Date();
 
@@ -430,8 +452,9 @@ export function FeedService(): Hono<{
             alias,
             top,
             listed: listed ? 1 : 0,
-            draft: draft === undefined ? undefined : draft ? 1 : 0,
+            draft: isScheduled ? 1 : (draft === undefined ? undefined : draft ? 1 : 0),
             createdAt: createdAt ? new Date(createdAt) : undefined,
+            scheduledAt: isScheduled ? scheduledDate : null,
             updatedAt: updateTime
         }).where(eq(feeds.id, id_num)));
 
@@ -573,6 +596,46 @@ export function SearchService(): Hono<{
     return app;
 }
 
+
+// 定时发布：把到点（scheduled_at <= now）的草稿翻为已发布，并把发布时间设为预定时刻。
+// 由 scheduled-handler 的每分钟 cron 调用；幂等（重复触发无副作用）。
+export async function publishScheduledFeeds(
+    db: any,
+    cache: any,
+    serverConfig: any,
+    env: any,
+): Promise<number> {
+    const now = new Date();
+    const due = await db.select({
+        id: feeds.id,
+        alias: feeds.alias,
+        scheduledAt: feeds.scheduledAt,
+    }).from(feeds).where(
+        and(eq(feeds.draft, 1), isNotNull(feeds.scheduledAt), lte(feeds.scheduledAt, now))
+    );
+
+    for (const f of due) {
+        const publishTime = new Date();
+        await db.update(feeds).set({
+            draft: 0,
+            createdAt: f.scheduledAt,
+            scheduledAt: null,
+            updatedAt: publishTime,
+        }).where(eq(feeds.id, f.id));
+        await clearFeedCache(cache, f.id, f.alias, null);
+        // 发布后触发 AI 摘要生成（与立即发布保持一致）
+        await syncFeedAISummaryQueueState(db, serverConfig, env, f.id, {
+            draft: false,
+            updatedAt: publishTime,
+            resetSummary: true,
+        });
+    }
+
+    if (due.length > 0) {
+        await cache.deletePrefix("feeds_");
+    }
+    return due.length;
+}
 
 export function WordPressService(): Hono<{
     Bindings: Env;
