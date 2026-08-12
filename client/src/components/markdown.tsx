@@ -452,6 +452,10 @@ function MarkdownVideo({
   const [revealed, setRevealed] = useState(false);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
+  // 记录是否播放过/是否已结束，用来决定是否用覆盖图填满容器：
+  // 仅在「从未播过」或「已结束」时显示海报覆盖图；播放中与播放中暂停时隐藏（露出视频帧）。
+  const [hasPlayed, setHasPlayed] = useState(false);
+  const [ended, setEnded] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hideTimer = useRef<number | null>(null);
   const placeholderRatio =
@@ -463,6 +467,9 @@ function MarkdownVideo({
 
   // 控制条可见 = 未播放(初始/暂停/结束) 或 播放中被点按临时唤起(revealed)。
   const controlsVisible = !playing || revealed;
+  // 海报覆盖图可见 = 未播放 且 (从未播过 或 已结束)。
+  // 播放中与播放中暂停均不显示覆盖图（露出视频帧），避免遮挡暂停画面。
+  const showPosterOverlay = !playing && (!hasPlayed || ended);
 
   // 播放中点按画面 → 显示控制条 1 秒，期间无操作则自动隐藏。
   const revealControls = () => {
@@ -568,8 +575,10 @@ function MarkdownVideo({
       // 比例对齐视频真实比例。不加黑色底框：即便 X5 在框内顶部留白，也只露出页面背景而非黑边。
       style={{ paddingTop: ratioToPadding(placeholderRatio) }}
     >
-      {/* 隐藏的 poster <img>：仅用于读取自然尺寸设定占位比例（缓解 CLS），
-          微信内 <img> 正常加载；不可见、不拦截点击，video 自身始终承担显示与交互。 */}
+      {/* 海报覆盖图：用独立 <img> + object-cover 强制填满容器。
+          <video poster> 在不同浏览器对 object-fit 的处理不一致，容易只显示一部分；
+          这里用覆盖图承担未播放/已结束时的画面显示，onLoad 顺便读取真实比例。
+          播放中与播放中暂停时隐藏（露出视频帧，避免遮挡暂停画面）。 */}
       {posterSrc ? (
         <img
           src={posterSrc}
@@ -581,17 +590,18 @@ function MarkdownVideo({
               setPosterRatio(`${img.naturalWidth} / ${img.naturalHeight}`);
             }
           }}
-          className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
+          className={`pointer-events-none absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${showPosterOverlay ? "opacity-100" : "opacity-0"}`}
         />
       ) : null}
       {/* 视频无原生控件(去掉微信 X5 自带控制条)；点击与播放状态完全由自定义控件接管。
           绝对定位 inset-0 占满容器(宽高显式 100%，不受 intrinsic 尺寸干扰)；
           objectFit:fill 兜底：容器比例对齐视频真实比例，无形变。
+          不在 <video> 上设 poster：海报显示由上方覆盖图承担，避免浏览器对
+          <video poster> 与 object-fit 处理不一致导致画面只显示一部分。
           视频不加 bg-black：X5 若在框内顶部留白，露出的也是页面背景而非黑边。 */}
       <video
         ref={videoRef}
         src={src}
-        poster={posterSrc}
         preload="metadata"
         playsInline
         {...X5_VIDEO_ATTRS}
@@ -599,13 +609,16 @@ function MarkdownVideo({
           // 一开始播放，控制条立即消失（不遮挡画面）。
           setPlaying(true);
           setRevealed(false);
+          setHasPlayed(true);
+          setEnded(false);
           if (hideTimer.current) window.clearTimeout(hideTimer.current);
         }}
         onPause={() => setPlaying(false)}
         onEnded={() => {
-          // 播放完毕，控制条重新出现（便于重播）。
+          // 播放完毕，控制条重新出现（便于重播），海报覆盖图重新显示。
           setPlaying(false);
           setRevealed(false);
+          setEnded(true);
         }}
         onClick={handleFrameTap}
         className="absolute inset-0 block h-full w-full"
