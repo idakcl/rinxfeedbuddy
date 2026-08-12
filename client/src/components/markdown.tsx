@@ -365,14 +365,17 @@ function MarkdownVideo({
   const posterMeta = poster ? parseImageUrlMetadata(poster) : undefined;
   const posterSrc = posterMeta?.src;
   // 视频占位比例优先级：视频真实比例 > 海报自然尺寸 > 海报内嵌尺寸 > 16:9。
-  // 容器(外层 div)用此比例预留高度避免 CLS；视频绝对定位填满容器。
-  // 关键：容器比例对齐视频真实比例后，无论微信 X5 是否遵守 object-fit，都不会再出现
-  // 因「盒子比例 ≠ 视频帧比例」导致的 letterbox(黑边)。
+  // 容器比例对齐视频真实比例后，无论微信 X5 是否遵守 object-fit，都不会出现 letterbox 黑边。
   const [posterRatio, setPosterRatio] = useState<string | null>(null);
   const [videoRatio, setVideoRatio] = useState<string | null>(null);
-  // playing 控制控制条显隐：播放中隐藏(不遮挡画面)，暂停/结束后显示(便于重播)。
+  // 自定义控件状态：playing=是否在播；revealed=播放中点按临时唤起(1s 自动隐藏)；
+  // current/duration=进度。播放中控制条隐藏，点画面显 1s，播完/暂停再显示。
   const [playing, setPlaying] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+  const [current, setCurrent] = useState(0);
+  const [duration, setDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hideTimer = useRef<number | null>(null);
   const placeholderRatio =
     videoRatio ??
     posterRatio ??
@@ -380,29 +383,90 @@ function MarkdownVideo({
       ? `${posterMeta.width} / ${posterMeta.height}`
       : "16 / 9");
 
-  // 用 ref + 多事件监听，比单靠 React 的 onLoadedMetadata 更可靠：
-  // 微信 X5 / 部分 WebView 可能延迟或仅在 loadeddata/canplay 时才给出 videoWidth/Height，
-  // 也可能首帧就用缓存直接就绪。把容器比例对齐视频真实比例，是去掉黑边的根本手段。
+  // 控制条可见 = 未播放(初始/暂停/结束) 或 播放中被点按临时唤起(revealed)。
+  const controlsVisible = !playing || revealed;
+
+  // 播放中点按画面 → 显示控制条 1 秒，期间无操作则自动隐藏。
+  const revealControls = () => {
+    setRevealed(true);
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => setRevealed(false), 1000);
+  };
+
+  const togglePlay = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused || v.ended) {
+      v.play().catch(() => {});
+    } else {
+      v.pause();
+    }
+  };
+
+  // 点画面：未播放则开始；播放中则临时唤起控制条 1 秒。
+  const handleFrameTap = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused || v.ended) {
+      v.play().catch(() => {});
+    } else {
+      revealControls();
+    }
+  };
+
+  // 点进度条跳转；重置 1 秒计时，方便连续操作。
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    const v = videoRef.current;
+    if (!v || !duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = (e.clientX - rect.left) / rect.width;
+    v.currentTime = Math.min(1, Math.max(0, ratio)) * duration;
+    revealControls();
+  };
+
+  const pct = duration > 0 ? (current / duration) * 100 : 0;
+  const fmt = (s: number) => {
+    if (!isFinite(s) || s < 0) s = 0;
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  };
+
+  // 用 ref + 多事件监听可靠拿到视频真实宽高(X5 可能延迟触发)；同时监听进度/时长。
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    const read = () => {
+    const readRatio = () => {
       if (v.videoWidth && v.videoHeight) {
         setVideoRatio(`${v.videoWidth} / ${v.videoHeight}`);
       }
     };
-    v.addEventListener("loadedmetadata", read);
-    v.addEventListener("loadeddata", read);
-    v.addEventListener("canplay", read);
-    v.addEventListener("durationchange", read);
-    read(); // 已就绪(缓存命中)时立即读一次
+    const onTime = () => setCurrent(v.currentTime);
+    const onDur = () => setDuration(v.duration || 0);
+    v.addEventListener("loadedmetadata", readRatio);
+    v.addEventListener("loadeddata", readRatio);
+    v.addEventListener("canplay", readRatio);
+    v.addEventListener("durationchange", readRatio);
+    v.addEventListener("timeupdate", onTime);
+    v.addEventListener("durationchange", onDur);
+    readRatio();
+    onDur();
     return () => {
-      v.removeEventListener("loadedmetadata", read);
-      v.removeEventListener("loadeddata", read);
-      v.removeEventListener("canplay", read);
-      v.removeEventListener("durationchange", read);
+      v.removeEventListener("loadedmetadata", readRatio);
+      v.removeEventListener("loadeddata", readRatio);
+      v.removeEventListener("canplay", readRatio);
+      v.removeEventListener("durationchange", readRatio);
+      v.removeEventListener("timeupdate", onTime);
+      v.removeEventListener("durationchange", onDur);
     };
   }, [src]);
+
+  // 卸载时清掉自动隐藏定时器，避免泄漏。
+  useEffect(() => {
+    return () => {
+      if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    };
+  }, []);
 
   return (
     <div
@@ -426,33 +490,90 @@ function MarkdownVideo({
           className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
         />
       ) : null}
-      {/* 视频绝对定位 inset-0 占满容器(宽高显式 100%，不受视频自身 intrinsic 尺寸干扰)，
-          objectFit:fill(inline 最高优先级)作为兜底：即便容器比例因元数据未就绪而瞬时偏差，
-          也用拉伸填满而非 letterbox。容器比例一旦对齐视频真实比例，则无形变。
-          控制条用 playing 状态切换：播放中 controls={false} 不遮挡画面；
-          暂停/播放结束 controls 恢复，便于重播。播放中点按视频即暂停并唤回控制条。 */}
+      {/* 视频无原生控件(去掉微信 X5 自带控制条)；点击与播放状态完全由自定义控件接管。
+          绝对定位 inset-0 占满容器(宽高显式 100%，不受 intrinsic 尺寸干扰)，
+          objectFit:fill(inline 最高优先级)兜底：容器比例对齐视频真实比例，无形变也无黑边。 */}
       <video
         ref={videoRef}
         src={src}
         poster={posterSrc}
-        controls={!playing}
         preload="metadata"
         playsInline
         {...X5_VIDEO_ATTRS}
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => setPlaying(false)}
-        onClick={(e) => {
-          // 播放中(控制条已隐藏)点按视频 = 暂停并立即唤回控制条；
-          // 未播放时交原生控制条处理，避免重复触发。
-          const v = e.currentTarget;
-          if (!v.paused) {
-            v.pause();
-          }
+        onPlay={() => {
+          // 一开始播放，控制条立即消失（不遮挡画面）。
+          setPlaying(true);
+          setRevealed(false);
+          if (hideTimer.current) window.clearTimeout(hideTimer.current);
         }}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          // 播放完毕，控制条重新出现（便于重播）。
+          setPlaying(false);
+          setRevealed(false);
+        }}
+        onClick={handleFrameTap}
         className="absolute inset-0 block h-full w-full bg-black"
         style={{ objectFit: "fill" }}
       />
+
+      {/* 未播放(初始/暂停/结束)：中央大播放键 */}
+      {!playing ? (
+        <button
+          type="button"
+          aria-label="播放"
+          onClick={(e) => {
+            e.stopPropagation();
+            togglePlay();
+          }}
+          className="absolute left-1/2 top-1/2 z-10 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur-sm transition hover:bg-black/60"
+        >
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+        </button>
+      ) : null}
+
+      {/* 控制条：未播放时常驻；播放中仅点按后显 1 秒 */}
+      {controlsVisible ? (
+        <div
+          className="absolute inset-x-0 bottom-0 z-10 flex items-center gap-2 bg-gradient-to-t from-black/70 to-transparent px-3 py-2 text-white"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            aria-label={playing ? "暂停" : "播放"}
+            onClick={(e) => {
+              e.stopPropagation();
+              togglePlay();
+              revealControls();
+            }}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/15 hover:bg-white/25"
+          >
+            {playing ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+              </svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            )}
+          </button>
+          <div
+            className="relative h-1.5 flex-1 cursor-pointer rounded-full bg-white/30"
+            onClick={handleSeek}
+          >
+            <div
+              className="absolute left-0 top-0 h-full rounded-full bg-white"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <span className="shrink-0 text-xs tabular-nums">
+            {fmt(current)} / {fmt(duration)}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }
