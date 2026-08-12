@@ -133,8 +133,8 @@ function buildOgMetaTags(og: OgData): string {
   if (og.title) tags.push(`<meta property="og:title" content="${og.title}">`);
   if (og.description) tags.push(`<meta property="og:description" content="${og.description}">`);
   if (og.image) tags.push(`<meta property="og:image" content="${og.image}">`);
-  // 微信/Twitter/LINE 等平台的卡片渲染依赖 og:image 的显式尺寸与 MIME；
-  // 缺尺寸时微信会退化为"无缩略图"卡片，title/desc 都在但图没了。
+  // og:image 的显式尺寸/MIME 仅在「已知真实值」时才写；尺寸写错(与实际图不符)
+  // 反而会让微信丢弃缩略图。参照同基建站实测，留空让微信按真实图自读最稳。
   if (og.image) {
     if (og.imageWidth) tags.push(`<meta property="og:image:width" content="${og.imageWidth}">`);
     if (og.imageHeight) tags.push(`<meta property="og:image:height" content="${og.imageHeight}">`);
@@ -214,7 +214,7 @@ async function getArticleOg(request: Request, env: Env, id: string): Promise<OgD
         } else if (OG_IMAGE_ALLOWED_HOSTS.includes(u.host)) {
           // 跨域白名单图床(如 netpan)：不能直接给微信爬虫(跨域抓取不稳/易超时)，
           // 改为同源路径式代理 /og-image/<base64url>，卡片才能稳定抓到文章首图。
-          image = `${base}/og-image/${encodeOgImageSrc(safe)}`;
+          image = `${base}/og-image/${encodeOgImageSrc(safe)}?v=2`;
         }
         // 其它跨域图：image 保持 undefined，最终回退 default-og.jpg
       }
@@ -224,18 +224,14 @@ async function getArticleOg(request: Request, env: Env, id: string): Promise<OgD
     const ev = env as unknown as Record<string, any>;
     const siteName = liveSite.name || (typeof ev?.NAME === "string" ? ev.NAME : "");
     // og:image：文章首图(同源直链 / 跨域走同源代理)优先；都不可用才回退品牌渐变 default-og.jpg。
-    // 微信/Twitter 卡片渲染要求显式尺寸与 MIME，缺这些元标签时微信会跳过缩略图只渲染纯文本卡片。
-    const ogImage = image || `${origin}/default-og.jpg`;
+    const ogImage = image || `${origin}/default-og.jpg?v=2`;
     return {
       type: "article",
       title: escapeHtmlAttr(title),
       description: escapeHtmlAttr(description),
       image: escapeHtmlAttr(ogImage),
-      // 默认 1200x630 + image/jpeg：微信/Twitter 卡片渲染要求显式尺寸与 MIME，
-      // 没有这些元标签时微信会跳过缩略图只渲染纯文本卡片。
-      imageWidth: 1200,
-      imageHeight: 630,
-      imageType: "image/jpeg",
+      // 不写死 og:image 尺寸/MIME：参照同基建站 log.hello.nyc.mn 实测，微信对
+      // 「声明尺寸与实际图不符」的图会丢弃缩略图；留空让微信按真实图自读，最稳。
       url: escapeHtmlAttr(new URL(request.url).toString()),
       siteName: escapeHtmlAttr(siteName),
       twitterCard: "summary_large_image",
@@ -293,10 +289,7 @@ async function getSiteOg(request: Request, env: Env): Promise<OgData> {
     title: escapeHtmlAttr(name),
     description: escapeHtmlAttr(description),
     image: escapeHtmlAttr(image),
-    // 同文章页：显式尺寸与 MIME 让微信/Twitter 卡片稳定渲染缩略图
-    imageWidth: 1200,
-    imageHeight: 630,
-    imageType: "image/jpeg",
+    // 不写死尺寸/MIME，参照 log.hello.nyc.mn 实测：留空让微信按真实图自读最稳
     url: escapeHtmlAttr(new URL(request.url).toString()),
     siteName: escapeHtmlAttr(name),
     twitterCard: "summary_large_image",
