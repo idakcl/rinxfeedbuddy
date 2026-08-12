@@ -26,7 +26,7 @@ export function FeedsPage() {
     const profile = useContext(ProfileContext);
     const type = ((query.get("type") as FeedType) || 'normal')
     const limit = tryInt(siteConfig.pageSize, query.get("limit"))
-    const feedListClass = siteConfig.feedLayout === "masonry" ? "wauto columns-1 gap-5 ani-show md:columns-2" : "wauto flex flex-col ani-show";
+    const feedListClass = siteConfig.feedLayout === "masonry" ? "wauto-feed columns-1 gap-5 ani-show md:columns-2" : "wauto-feed flex flex-col ani-show";
 
     const [status, setStatus] = useState<'loading' | 'idle'>('idle')
     const [feeds, setFeeds] = useState<FeedsData>()
@@ -73,7 +73,7 @@ export function FeedsPage() {
             </Helmet>
             <Waiting for={status === 'idle'}>
                 <main className="w-full flex flex-col justify-center items-center mb-8">
-                    <div className="wauto text-start text-black dark:text-white py-4 text-4xl font-bold">
+                    <div className="wauto-feed text-start text-black dark:text-white py-4 text-4xl font-bold">
                         <p>
                             {type === 'draft' ? t('draft_bin') : type === 'normal' ? t('article.title') : t('unlisted')}
                         </p>
@@ -98,7 +98,7 @@ export function FeedsPage() {
                             <FeedCard key={id} id={id} {...feed} />
                         ))}
                     </div>
-                    <div className="wauto flex flex-col items-center mt-4 ani-show">
+                    <div className="wauto-feed flex flex-col items-center mt-4 ani-show">
                         {/* 当前页 / 总页数 */}
                         <div className="text-sm text-neutral-500 font-normal py-2">
                             {t('page_current', { page, total: totalPages })}
