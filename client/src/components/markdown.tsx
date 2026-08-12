@@ -370,6 +370,8 @@ function MarkdownVideo({
   // 因「盒子比例 ≠ 视频帧比例」导致的 letterbox(黑边)。
   const [posterRatio, setPosterRatio] = useState<string | null>(null);
   const [videoRatio, setVideoRatio] = useState<string | null>(null);
+  // playing 控制控制条显隐：播放中隐藏(不遮挡画面)，暂停/结束后显示(便于重播)。
+  const [playing, setPlaying] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const placeholderRatio =
     videoRatio ??
@@ -426,15 +428,28 @@ function MarkdownVideo({
       ) : null}
       {/* 视频绝对定位 inset-0 占满容器(宽高显式 100%，不受视频自身 intrinsic 尺寸干扰)，
           objectFit:fill(inline 最高优先级)作为兜底：即便容器比例因元数据未就绪而瞬时偏差，
-          也用拉伸填满而非 letterbox。容器比例一旦对齐视频真实比例，则无形变。 */}
+          也用拉伸填满而非 letterbox。容器比例一旦对齐视频真实比例，则无形变。
+          控制条用 playing 状态切换：播放中 controls={false} 不遮挡画面；
+          暂停/播放结束 controls 恢复，便于重播。播放中点按视频即暂停并唤回控制条。 */}
       <video
         ref={videoRef}
         src={src}
         poster={posterSrc}
-        controls
+        controls={!playing}
         preload="metadata"
         playsInline
         {...X5_VIDEO_ATTRS}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+        onClick={(e) => {
+          // 播放中(控制条已隐藏)点按视频 = 暂停并立即唤回控制条；
+          // 未播放时交原生控制条处理，避免重复触发。
+          const v = e.currentTarget;
+          if (!v.paused) {
+            v.pause();
+          }
+        }}
         className="absolute inset-0 block h-full w-full bg-black"
         style={{ objectFit: "fill" }}
       />
