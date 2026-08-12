@@ -345,12 +345,12 @@ function MarkdownImage({
 }
 
 // 微信 Android(X5)/老 iOS 兼容属性：React 类型未定义，用 as any 透传到底层 DOM。
-// x5-video-player-type="h5" 切到 H5 播放器，尊重 CSS object-fit 与 inline 布局，
-// 消除画面偏移并支持页内小窗播放；webkit-playsinline 兼容老 WebView。
+// 仅保留 playsinline 系列以请求内联播放；刻意去掉 x5-video-player-type="h5"——
+// 该属性会强制 X5 的 H5 播放器，并在视频框内顶部注入间距/chrome，导致顶部留白
+// （且 X5 不遵守 object-fit，留白无法消除）。去掉后视频按标准内联渲染、满铺框。
 const X5_VIDEO_ATTRS = {
   "webkit-playsinline": "true",
   "x5-playsinline": "true",
-  "x5-video-player-type": "h5",
 } as any;
 
 // ---------------------------------------------------------------------------
