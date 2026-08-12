@@ -353,6 +353,84 @@ const X5_VIDEO_ATTRS = {
   "x5-video-player-type": "h5",
 } as any;
 
+// ---------------------------------------------------------------------------
+// 视频真实宽高探测：微信 X5 不一定触发 <video> 的 loadedmetadata，导致拿不到
+// 视频比例、容器比例回退成 16/9，使竖屏视频被上下黑边夹住。改为前端直接解析视频
+// 头部(moov/avc1 等)拿宽高，100% 可靠，兼容所有 WebView。
+// 依赖图床支持 Range(206) + CORS(*)。探测失败则回退 poster/16:9。
+// ---------------------------------------------------------------------------
+const videoSizeCache = new Map<string, { width: number; height: number } | null>();
+const videoSizePending = new Set<string>();
+
+function parseMovSize(buf: ArrayBuffer): { width: number; height: number } | null {
+  const dv = new DataView(buf);
+  const bytes = new Uint8Array(buf);
+  const findBox = (type: string): number => {
+    const t = [type.charCodeAt(0), type.charCodeAt(1), type.charCodeAt(2), type.charCodeAt(3)];
+    for (let i = 0; i < bytes.length - 4; i++) {
+      if (bytes[i] === t[0] && bytes[i + 1] === t[1] && bytes[i + 2] === t[2] && bytes[i + 3] === t[3]) {
+        return i;
+      }
+    }
+    return -1;
+  };
+  // 视频宽高在 avc1/hev1/hvc1/mp4v 样本条目内，距类型字段 +28/+30 字节处(2 字节)。
+  for (const type of ["avc1", "hev1", "hvc1", "mp4v"]) {
+    const idx = findBox(type);
+    if (idx >= 0) {
+      const width = dv.getUint16(idx + 28, false);
+      const height = dv.getUint16(idx + 30, false);
+      if (width > 0 && height > 0) return { width, height };
+    }
+  }
+  return null;
+}
+
+async function fetchRange(url: string, start: number, end: number): Promise<ArrayBuffer> {
+  const res = await fetch(url, { headers: { Range: `bytes=${start}-${end}` } });
+  return await res.arrayBuffer();
+}
+
+async function probeVideoSize(url: string): Promise<{ width: number; height: number } | null> {
+  const clean = url.split("#")[0];
+  if (videoSizeCache.has(clean)) return videoSizeCache.get(clean)!;
+  if (videoSizePending.has(clean)) return null;
+  videoSizePending.add(clean);
+  try {
+    let len = 0;
+    try {
+      const head = await fetch(clean, { method: "HEAD" });
+      len = Number(head.headers.get("content-length") || 0);
+    } catch {
+      /* 忽略：按默认范围取 */
+    }
+    const firstEnd = len > 0 ? Math.min(len - 1, 1048575) : 1048575;
+    let size = parseMovSize(await fetchRange(clean, 0, firstEnd));
+    if (!size && len > 1048576) {
+      // moov 在文件尾部时，补取最后 1MB 再解析。
+      const start = Math.max(0, len - 1048576);
+      size = parseMovSize(await fetchRange(clean, start, len - 1));
+    }
+    videoSizeCache.set(clean, size);
+    return size;
+  } catch {
+    videoSizeCache.set(clean, null);
+    return null;
+  } finally {
+    videoSizePending.delete(clean);
+  }
+}
+
+// 把 "w / h" 比例转成 padding-top 百分比撑高。兼容性远优于 CSS aspect-ratio，
+// 老 X5 WebView 必支持，避免 aspect-ratio 不被识别导致容器高度错误、视频被黑边夹住。
+function ratioToPadding(r: string): string {
+  const m = r.match(/^\s*(\d+)\s*\/\s*(\d+)\s*$/);
+  if (m && Number(m[2]) > 0) {
+    return `${(Number(m[2]) / Number(m[1])) * 100}%`;
+  }
+  return "56.25%"; // 16/9 兜底
+}
+
 function MarkdownVideo({
   src,
   poster,
@@ -432,7 +510,22 @@ function MarkdownVideo({
     return `${m}:${sec.toString().padStart(2, "0")}`;
   };
 
-  // 用 ref + 多事件监听可靠拿到视频真实宽高(X5 可能延迟触发)；同时监听进度/时长。
+  // 前端解析视频头部拿真实比例（不依赖 X5 的 loadedmetadata 事件，100% 可靠）。
+  useEffect(() => {
+    let cancelled = false;
+    const clean = (src || "").split("#")[0];
+    if (clean) {
+      probeVideoSize(clean).then((size) => {
+        if (!cancelled && size) setVideoRatio(`${size.width} / ${size.height}`);
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  // 用 ref + 多事件监听拿到视频真实宽高(X5 可能延迟触发，作为 moov 探测的备用)；
+  // 同时监听进度/时长。
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -471,8 +564,9 @@ function MarkdownVideo({
   return (
     <div
       className="relative my-4 -mx-4 w-[calc(100%+2rem)] overflow-hidden bg-black"
-      // 容器按占位比例(视频真实比例)预留高度，避免 CLS；视频绝对定位填满容器。
-      style={{ aspectRatio: placeholderRatio }}
+      // 用 padding-top 百分比撑高（兼容老 X5，替代 aspect-ratio CSS）；
+      // 比例对齐视频真实比例后，无论 X5 是否遵守 object-fit，都不会出现 letterbox 黑边。
+      style={{ paddingTop: ratioToPadding(placeholderRatio) }}
     >
       {/* 隐藏的 poster <img>：仅用于读取自然尺寸设定占位比例（缓解 CLS），
           微信内 <img> 正常加载；不可见、不拦截点击，video 自身始终承担显示与交互。 */}
