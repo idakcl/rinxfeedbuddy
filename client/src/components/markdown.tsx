@@ -563,9 +563,9 @@ function MarkdownVideo({
 
   return (
     <div
-      className="relative my-4 -mx-4 w-[calc(100%+2rem)] overflow-hidden bg-black"
+      className="relative my-4 -mx-4 w-[calc(100%+2rem)] overflow-hidden"
       // 用 padding-top 百分比撑高（兼容老 X5，替代 aspect-ratio CSS）；
-      // 比例对齐视频真实比例后，无论 X5 是否遵守 object-fit，都不会出现 letterbox 黑边。
+      // 比例对齐视频真实比例。不加黑色底框：即便 X5 在框内顶部留白，也只露出页面背景而非黑边。
       style={{ paddingTop: ratioToPadding(placeholderRatio) }}
     >
       {/* 隐藏的 poster <img>：仅用于读取自然尺寸设定占位比例（缓解 CLS），
@@ -585,8 +585,9 @@ function MarkdownVideo({
         />
       ) : null}
       {/* 视频无原生控件(去掉微信 X5 自带控制条)；点击与播放状态完全由自定义控件接管。
-          绝对定位 inset-0 占满容器(宽高显式 100%，不受 intrinsic 尺寸干扰)，
-          objectFit:fill(inline 最高优先级)兜底：容器比例对齐视频真实比例，无形变也无黑边。 */}
+          绝对定位 inset-0 占满容器(宽高显式 100%，不受 intrinsic 尺寸干扰)；
+          objectFit:fill 兜底：容器比例对齐视频真实比例，无形变。
+          视频不加 bg-black：X5 若在框内顶部留白，露出的也是页面背景而非黑边。 */}
       <video
         ref={videoRef}
         src={src}
@@ -607,7 +608,7 @@ function MarkdownVideo({
           setRevealed(false);
         }}
         onClick={handleFrameTap}
-        className="absolute inset-0 block h-full w-full bg-black"
+        className="absolute inset-0 block h-full w-full"
         style={{ objectFit: "fill" }}
       />
 
